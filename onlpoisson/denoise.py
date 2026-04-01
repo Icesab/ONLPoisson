@@ -1,8 +1,4 @@
-"""Reference-oriented ONL Poisson denoising loop.
-
-This module mirrors the core loop in ``nlm_poisson004.c`` with the requested
-paper-aligned similarity update.
-"""
+"""Python implementation of the ONL denoiser from ``nlm_poisson004.c``."""
 
 from __future__ import annotations
 
@@ -11,118 +7,105 @@ import math
 import numpy as np
 
 
-NU = 1e-4
+def _compute_cw(np_radius: int) -> np.ndarray:
+    if np_radius <= 0:
+        return np.array([1.0], dtype=np.float64)
+
+    cw = np.zeros(np_radius + 1, dtype=np.float64)
+    for i in range(1, np_radius + 1):
+        s = 0.0
+        for j in range(i, np_radius + 1):
+            s += 1.0 / (np_radius * (2 * j + 1) * (2 * j + 1))
+        cw[i] = s
+    cw[0] = cw[1]
+    return cw
 
 
-def _build_patch_weights(np_half: int, nxsy: int) -> tuple[np.ndarray, np.ndarray]:
-    """Reproduce ``w`` and ``dadr`` construction from the C implementation."""
-    np2 = 2 * np_half + 1
-    npnp = np2 * np2
+def _mean_filter_reflect(img: np.ndarray, radius: int) -> np.ndarray:
+    if radius <= 0:
+        return img.astype(np.float64, copy=True)
 
-    cw = np.zeros(np_half + 1, dtype=np.float64)
-    for i in range(1, np_half + 1):
-        acc = 0.0
-        for j in range(i, np_half + 1):
-            acc += 1.0 / (np_half * (2 * j + 1) * (2 * j + 1))
-        cw[i] = acc
-    if np_half >= 1:
-        cw[0] = cw[1]
-    else:
-        cw[0] = 1.0
-
-    w = np.empty(npnp, dtype=np.float64)
-    dadr = np.empty(npnp, dtype=np.int64)
-    idx = 0
-    for x in range(-np_half, np_half + 1):
-        for y in range(-np_half, np_half + 1):
-            dadr[idx] = y * nxsy + x
-            j = max(abs(x), abs(y))
-            w[idx] = cw[j]
-            idx += 1
-    return w, dadr
+    k = 2 * radius + 1
+    padded = np.pad(img, radius, mode="reflect")
+    integral = np.pad(np.cumsum(np.cumsum(padded, axis=0), axis=1), ((1, 0), (1, 0)))
+    out = (
+        integral[k:, k:]
+        - integral[:-k, k:]
+        - integral[k:, :-k]
+        + integral[:-k, :-k]
+    )
+    return out / (k * k)
 
 
-def _avsqrt_image(synoisy: np.ndarray, nwp: int, nx: int, ny: int, nw: int, nxsy: int) -> np.ndarray:
-    """Equivalent of ``avsqrt_image`` in C: local mean + clipping + sqrt."""
-    nwnw = (2 * nw + 1) ** 2
-    av = np.empty(nx * ny, dtype=np.float64)
+def denoise_onl(
+    noisy: np.ndarray,
+    nwin: int = 3,
+    npat: int = 6,
+    nlh: float = 0.5,
+) -> np.ndarray:
+    """Denoise a 2D Poisson-noisy image with ONL.
 
-    k = 0
-    for x in range(nwp, nx + nwp):
-        for y in range(nwp, ny + nwp):
-            local = synoisy[y - nw : y + nw + 1, x - nw : x + nw + 1]
-            mean_val = float(local.sum()) / nwnw
-            mean_val = min(max(mean_val, 0.0), 255.0)
-            av[k] = math.sqrt(mean_val)
-            k += 1
-    return av
-
-
-def denoise_poisson(noisy: np.ndarray, nw: int = 3, npat: int = 6, mu: float = 0.5) -> np.ndarray:
-    """Denoise a 2D image with ONL Poisson main loop.
-
-    Args:
-        noisy: Input image, 2D array-like.
-        nw: Half search-window size.
-        npat: Half patch size.
-        mu: Similarity parameter ``mu`` (``nlh`` in C).
-
-    Returns:
-        Denoised image with same shape as ``noisy``.
+    Parameters mirror ``nlm_poisson004``:
+    - ``nwin``: half of search-window size
+    - ``npat``: half of patch size
+    - ``nlh``: smoothing parameter used in exponential weights
     """
+
     noisy = np.asarray(noisy, dtype=np.float64)
     if noisy.ndim != 2:
-        raise ValueError("noisy must be a 2D array")
-    if nw < 0 or npat < 0:
-        raise ValueError("nw and npat must be non-negative")
+        raise ValueError("`noisy` must be a 2D array.")
+    if nwin < 0 or npat < 0:
+        raise ValueError("`nwin` and `npat` must be non-negative.")
+    if nlh <= 0:
+        raise ValueError("`nlh` must be positive.")
 
-    nx, ny = noisy.shape
-    nwp = nw + npat
+    h, w = noisy.shape
+    nwp = nwin + npat
+    synoisy = np.pad(noisy, nwp, mode="reflect")
 
-    # Mirror/symmetric extension (C code's explicit symmetric padding intent).
-    synoisy = np.pad(noisy, ((nwp, nwp), (nwp, nwp)), mode="symmetric")
+    avimage = np.sqrt(np.clip(_mean_filter_reflect(synoisy, nwin), 0.0, 255.0))
 
-    nxsy = nx + 2 * nwp
-    avimage = _avsqrt_image(synoisy, nwp=nwp, nx=nx, ny=ny, nw=nw, nxsy=nxsy)
+    # Restrict to original image support.
+    avimage = avimage[nwp : nwp + h, nwp : nwp + w]
 
-    w, dadr = _build_patch_weights(np_half=npat, nxsy=nxsy)
-    npnp = w.size
+    patch_offsets = []
+    patch_weights = []
+    cw = _compute_cw(npat)
+    for dx in range(-npat, npat + 1):
+        for dy in range(-npat, npat + 1):
+            patch_offsets.append((dx, dy))
+            patch_weights.append(cw[max(abs(dx), abs(dy))])
+    patch_weights = np.asarray(patch_weights, dtype=np.float64)
 
-    denoisy = np.empty(nx * ny, dtype=np.float64)
-    syn_flat = synoisy.ravel(order="C")
+    out = np.zeros((h, w), dtype=np.float64)
 
-    k = 0
-    for x in range(nwp, nx + nwp):
-        for y in range(nwp, ny + nwp):
-            adr = y * nxsy + x
-            v = avimage[k]
-            if v == 0.0:
-                denoisy[k] = 0.0
-                k += 1
+    for i in range(h):
+        x = i + nwp
+        for j in range(w):
+            y = j + nwp
+            v = avimage[i, j]
+            if v == 0:
+                out[i, j] = 0.0
                 continue
 
-            uD = v * v
-            weight_sum = 0.0
-            value_sum = 0.0
+            center_patch = np.array(
+                [synoisy[x + dx, y + dy] for dx, dy in patch_offsets], dtype=np.float64
+            )
 
-            for xp in range(x - nw, x + nw + 1):
-                for yp in range(y - nw, y + nw + 1):
-                    dist2 = 0.0
-                    adrp = yp * nxsy + xp
-                    for j in range(npnp):
-                        offset = int(dadr[j])
-                        c1 = syn_flat[adr + offset]
-                        c2 = syn_flat[adrp + offset]
-                        diff = c1 - c2
-                        dist2 += w[j] * diff * diff
+            num = 0.0
+            den = 0.0
+            for sx in range(x - nwin, x + nwin + 1):
+                for sy in range(y - nwin, y + nwin + 1):
+                    cand_patch = np.array(
+                        [synoisy[sx + dx, sy + dy] for dx, dy in patch_offsets],
+                        dtype=np.float64,
+                    )
+                    dist2 = np.sum(patch_weights * (center_patch - cand_patch) ** 2)
+                    dist2 = max(math.sqrt(dist2) - 1.414 * v, 0.0)
+                    wrho = math.exp(-dist2 / (nlh * v))
+                    den += wrho
+                    num += wrho * synoisy[sx, sy]
 
-                    dist2 = max(dist2 - 2.0 * uD, 0.0)
-                    wrho = math.exp(-dist2 / (mu * v + NU))
-                    weight_sum += wrho
-                    value_sum += wrho * synoisy[yp, xp]
+            out[i, j] = np.clip(num / den if den > 0 else synoisy[x, y], 0.0, 255.0)
 
-            out = value_sum / weight_sum
-            denoisy[k] = min(max(out, 0.0), 255.0)
-            k += 1
-
-    return denoisy.reshape((nx, ny))
+    return out

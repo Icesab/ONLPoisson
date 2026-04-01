@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "onlpoisson"
+version = "0.1.0"
+description = "Python runner metadata and CLI for ONLPoisson reproducibility workflow"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy",
+  "scipy",
+  "h5py",
+]
+
+[project.scripts]
+onlpoisson-run = "onlpoisson.cli:main"
+
+[tool.setuptools]
+packages = ["onlpoisson"]

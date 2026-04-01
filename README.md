@@ -1,37 +1,59 @@
-# ONLPoisson
-The code in this package implements the Poisson shot noise removal by an oracular  non-local  algorithm (ONL) for image denoising as described in the following paper：
+# ONLPoisson（Python 运行指南）
 
-Qiyu Jin, Ion Grama and Quansheng Liu, Poisson shot noise removal by an oracular  non-local  algorithm
--------------------------------------------------------------------
- Contents
--------------------------------------------------------------------
-    
-demo_onl.m                                          - script reproducing the results in Table 1 of the paper
-nlm_poisson004.m                                 -the main function of nlmps algorithm
-ReadMe.md                                            - this file
+本仓库当前以 **Python 运行流程** 为主，用于组织 ONLPoisson 复现实验的执行入口与结果落盘。
 
+> 说明：仓库中的 `.m` / `.c` / `.mexw64` / `.dll` 文件仅作历史参考，不参与当前复现实验执行链路。
 
-Qiyu Jin, Ion Grama and Quansheng Liu, Poisson shot noise removal by an oracular  non-local  algorithm
-% ===============================================================
+## 1. 环境要求
 
+- Python 3.10+
+- 建议操作系统：Linux / macOS / Windows
+- 依赖见 `requirements.txt`
 
-Overview
+## 2. 安装步骤
 
-------------
+### 方式 A：使用 pip 安装（推荐）
 
-The function "demo_nlmps" demonstrates denoising with the oracular  non-local  algorithm
-introduced in the paper.
+```bash
+python -m pip install -U pip
+python -m pip install -r requirements.txt
+python -m pip install -e .
+```
 
+### 方式 B：仅安装运行依赖
 
-Dependency
+```bash
+python -m pip install -U pip
+python -m pip install -r requirements.txt
+```
 
-------------
+## 3. 运行命令
 
-This code is implemented purely in Matlab2014a and doesn't depends on any other toolbox.
+### 命令行入口（安装 `-e .` 后）
 
+```bash
+onlpoisson-run --images images.mat --output-dir results
+```
 
+### 或使用模块方式
 
-Contact
+```bash
+python -m onlpoisson.cli --images images.mat --output-dir results
+```
 
-----------
-If you have questions, problems with the code, or find a bug, please let us know.Please contact qyjin2015@aliyun.com
+## 4. 结果文件位置
+
+默认输出目录：`results/`
+
+运行后会生成：
+
+- `results/run_info.json`：本次运行的基础元数据（输入文件、图像键名、shape 等）
+
+## 5. 历史文件说明
+
+以下文件保留用于历史代码参考与论文实现对照：
+
+- MATLAB 脚本与函数：`.m`
+- C/MEX 源码与二进制：`.c` / `.mexw64` / `.dll`
+
+这些文件 **不属于当前 Python 复现实验的执行链路**。
